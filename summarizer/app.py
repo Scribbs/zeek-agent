@@ -6,17 +6,19 @@ from openai import OpenAI
 from pathlib import Path
 from datetime import datetime, timedelta
 
+# OpenAI-compatible client pointed at NemoClaw / vLLM
 client = OpenAI(
-    base_url=os.getenv("OLLAMA_BASE_URL", "http://ollama:11434/v1"),
-    api_key="ollama"
+    base_url=os.getenv("VLLM_BASE_URL", "http://host.docker.internal:8000/v1"),
+    api_key=os.getenv("VLLM_API_KEY", "not-needed")
 )
-MODEL = os.getenv("MODEL", "qwen3.6:35b")
+MODEL = os.getenv("MODEL", "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4")
 ZEEK_DIR = Path("/zeek/logs")
 REFRESH = int(os.getenv("REFRESH_SECONDS", "60"))
 WINDOW_MIN = int(os.getenv("LOG_WINDOW_MINUTES", "15"))
 
 st.set_page_config(page_title="Zeek Summary", layout="wide")
 st.title("Zeek Near-Real-Time Summary")
+st.caption("Powered by NemoClaw / OpenShell + vLLM")
 
 def load_log(name):
     p = ZEEK_DIR / f"{name}.log"
@@ -85,6 +87,6 @@ while True:
         with st.spinner("Summarizing..."):
             st.markdown(summarize(blob))
 
-        st.caption(f"Updated {datetime.now().strftime('%H:%M:%S')}  |  Window: last {WINDOW_MIN} min")
+        st.caption(f"Updated {datetime.now().strftime('%H:%M:%S')}  |  Window: last {WINDOW_MIN} min  |  Model: {MODEL}")
 
     time.sleep(REFRESH)

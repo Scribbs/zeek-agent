@@ -1,27 +1,18 @@
 services:
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
+  # Optional: run Zeek itself inside the stack (comment out if using host/NFS Zeek logs)
+  zeek:
+    image: zeek/zeek:lts
+    container_name: zeek
     restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_FLASH_ATTENTION=1
-      - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_KEEP_ALIVE=-1
     networks:
       - zeek-net
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    working_dir: /usr/local/zeek/logs
+    command: zeek -i eth0 local          # change eth0 to your capture interface
+    volumes:
+      - ${ZEEK_LOG_DIR:-/opt/zeek/logs}:/usr/local/zeek/logs
 
   zeek-summarizer:
     build: ./summarizer
@@ -30,22 +21,25 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ${ZEEK_LOG_DIR:-/opt/zeek/logs/current}:/zeek/logs:ro
+      - ${ZEEK_LOG_DIR:-/opt/zeek/logs}:/zeek/logs:ro
       - summarizer-data:/app/data
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434/v1
-      - MODEL=qwen3.6:35b
-      - REFRESH_SECONDS=60
-      - LOG_WINDOW_MINUTES=15
+      # Point at NemoClaw-managed vLLM (OpenAI-compatible endpoint)
+      - VLLM_BASE_URL=${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+      - MODEL=${VLLM_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4}
+      - REFRESH_SECONDS=${REFRESH_SECONDS:-60}
+      - LOG_WINDOW_MINUTES=${LOG_WINDOW_MINUTES:-15}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      - ollama
+      - zeek
     networks:
       - zeek-net
 
 volumes:
-  ollama-data:
   summarizer-data:
 
 networks:
   zeek-net:
+    name: zeek-net
     driver: bridge
