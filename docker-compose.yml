@@ -1,0 +1,51 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_FLASH_ATTENTION=1
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_KEEP_ALIVE=-1
+    networks:
+      - zeek-net
+
+  zeek-summarizer:
+    build: ./summarizer
+    container_name: zeek-summarizer
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - ${ZEEK_LOG_DIR:-/opt/zeek/logs/current}:/zeek/logs:ro
+      - summarizer-data:/app/data
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434/v1
+      - MODEL=qwen3.6:35b
+      - REFRESH_SECONDS=60
+      - LOG_WINDOW_MINUTES=15
+    depends_on:
+      - ollama
+    networks:
+      - zeek-net
+
+volumes:
+  ollama-data:
+  summarizer-data:
+
+networks:
+  zeek-net:
+    driver: bridge
