@@ -1,0 +1,39 @@
+# Zeek analysis stack (summarizer UI)
+# Points at the vLLM endpoint started by docker-compose.vllm.yml
+
+services:
+  zeek:
+    image: zeek/zeek:lts
+    container_name: zeek
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    working_dir: /usr/local/zeek/logs
+    command: zeek -i ${ZEEK_IFACE:-eth0} local
+    volumes:
+      - ${ZEEK_LOG_DIR:-/opt/zeek/logs}:/usr/local/zeek/logs
+
+  zeek-summarizer:
+    build: ./summarizer
+    container_name: zeek-summarizer
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - ${ZEEK_LOG_DIR:-/opt/zeek/logs}:/zeek/logs:ro
+      - summarizer-data:/app/data
+    environment:
+      - VLLM_BASE_URL=${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+      - MODEL=${VLLM_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4}
+      - VLLM_API_KEY=${VLLM_API_KEY:-not-needed}
+      - REFRESH_SECONDS=${REFRESH_SECONDS:-60}
+      - LOG_WINDOW_MINUTES=${LOG_WINDOW_MINUTES:-15}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - zeek
+
+volumes:
+  summarizer-data:
