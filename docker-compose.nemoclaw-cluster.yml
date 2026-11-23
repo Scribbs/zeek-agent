@@ -1,0 +1,100 @@
+# Multi-node NemoClaw / OpenShell + vLLM for 2× Dell Pro Max GB10 (DGX Spark class)
+#
+# Usage:
+#   Node 1 (head):
+#     export HEAD_IP=<node1-ip-on-cluster-fabric>
+#     export PEER_IP=<node2-ip>
+#     docker compose -f docker-compose.nemoclaw-cluster.yml up -d
+#
+#   Node 2 (worker):
+#     export HEAD_IP=<node1-ip>
+#     docker compose -f docker-compose.nemoclaw-cluster.yml --profile worker up -d
+#
+# Then onboard NemoClaw on the head node pointing at the vLLM endpoint.
+
+services:
+  # OpenShell gateway (runs on head only)
+  openshell-gateway:
+    image: ghcr.io/nvidia/openshell/gateway:latest
+    container_name: openshell-gateway
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - OPENSHELL_SERVER_PORT=${OPENSHELL_PORT:-9090}
+      - OPENSHELL_DISABLE_TLS=true
+      - OPENSHELL_DRIVERS=docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - openshell-state:/var/lib/openshell
+    profiles:
+      - head
+
+  # Ray head + vLLM (head node)
+  vllm-head:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-head
+    restart: unless-stopped
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      - NCCL_SOCKET_IFNAME=${NCCL_IF:-eth0}
+      - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
+      - GLOO_SOCKET_IFNAME=${NCCL_IF:-eth0}
+      - TP_SOCKET_IFNAME=${NCCL_IF:-eth0}
+      - VLLM_HOST_IP=${HEAD_IP}
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ${HF_CACHE:-$HOME/.cache/huggingface}:/root/.cache/huggingface
+      - /dev/infiniband:/dev/infiniband
+    command: >
+      vllm serve ${VLLM_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4}
+      --host 0.0.0.0
+      --port ${VLLM_PORT:-8000}
+      --tensor-parallel-size 2
+      --pipeline-parallel-size 1
+      --gpu-memory-utilization 0.80
+      --max-model-len 32768
+      --trust-remote-code
+    profiles:
+      - head
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Ray / vLLM worker (worker node)
+  vllm-worker:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-worker
+    restart: unless-stopped
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      - NCCL_SOCKET_IFNAME=${NCCL_IF:-eth0}
+      - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
+      - GLOO_SOCKET_IFNAME=${NCCL_IF:-eth0}
+      - TP_SOCKET_IFNAME=${NCCL_IF:-eth0}
+      - VLLM_HOST_IP=${HEAD_IP}
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ${HF_CACHE:-$HOME/.cache/huggingface}:/root/.cache/huggingface
+      - /dev/infiniband:/dev/infiniband
+    command: >
+      ray start --address=${HEAD_IP}:6379 --block
+    profiles:
+      - worker
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  openshell-state:
