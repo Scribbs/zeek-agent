@@ -7,7 +7,6 @@ from openai import OpenAI
 from pathlib import Path
 from datetime import datetime, timedelta
 
-# OpenAI-compatible client pointed at NemoClaw / vLLM
 client = OpenAI(
     base_url=os.getenv("VLLM_BASE_URL", "http://host.docker.internal:8000/v1"),
     api_key=os.getenv("VLLM_API_KEY", "not-needed")
@@ -36,39 +35,59 @@ def load_log(name):
         return pd.DataFrame()
 
 def strip_reasoning(text: str) -> str:
-    """Remove common reasoning-model traces so only the final summary remains."""
-    # Drop <think>...</think> blocks if present
+    """Keep only the final bullet summary; drop reasoning traces."""
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
-    # Drop leading "The user wants..." style preambles up to the first real summary marker
+
+    # Prefer content after an explicit summary marker
     for marker in ("**Summary**", "Summary:", "## Summary", "Final summary:", "Here is the summary"):
         idx = text.lower().find(marker.lower())
         if idx != -1:
             text = text[idx:]
             break
+
+    # If still looks like reasoning, keep from the first bullet onward
+    lines = text.splitlines()
+    bullet_idx = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(("-", "*", "•")) or re.match(r"^\d+[.)]\s", stripped):
+            bullet_idx = i
+            break
+    if bullet_idx is not None and bullet_idx > 2:
+        text = "\n".join(lines[bullet_idx:])
+
+    # Drop any remaining leading prose that is clearly reasoning
+    text = re.sub(
+        r"^(The user wants|Let me|I need to|Looking at|Analyzing|Here'?s my|Okay,).*?(?=\n[-*•]|\n\d+[.)])",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
     return text.strip()
 
 def summarize(text):
     if not text.strip():
         return "No recent data."
-    prompt = f"""You are a network security analyst. Summarize these recent Zeek logs.
-Focus on top talkers, notices, unusual volumes, beaconing signs, odd ports/protocols.
-Be concise with bullets.
+    prompt = f"""Summarize these Zeek logs as a network security analyst.
+Output ONLY a short bullet list. No preamble, no reasoning, no "The user wants", no "Let me analyze".
+Start with the first bullet.
 
-IMPORTANT: Output ONLY the final summary. Do not include your reasoning, chain-of-thought, or any preamble like "The user wants" or "Let me parse". Start directly with the summary.
+Focus on: top talkers, unusual volumes, beaconing, odd ports/protocols, notices.
 
-{text[:12000]}"""
+{text[:8000]}"""
     try:
         r = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": "You are a concise network security analyst. Reply with only the final bullet summary. No reasoning, no preamble."},
+                {"role": "system", "content": "Reply with only a bullet list. No reasoning. No preamble. First character must be a dash or asterisk."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.2,
-            max_tokens=600
+            temperature=0.1,
+            max_tokens=400
         )
         raw = r.choices[0].message.content or ""
-        return strip_reasoning(raw)
+        cleaned = strip_reasoning(raw)
+        return cleaned if cleaned else raw
     except Exception as e:
         return f"LLM error: {e}"
 
@@ -98,7 +117,7 @@ while True:
 
         blob = ""
         if not conn.empty:
-            blob += "CONN:\n" + conn.head(80).to_string() + "\n"
+            blob += "CONN:\n" + conn.head(60).to_string() + "\n"
         if not notice.empty:
             blob += "NOTICES:\n" + notice.to_string() + "\n"
 
