@@ -1,13 +1,15 @@
-# Multi-node vLLM for 2× GB10 cluster (1 GPU per node)
+# Multi-node Ray cluster for 2× GB10 (1 GPU per node)
 #
 # Builds a thin image that adds Ray (stock vllm/vllm-openai no longer ships it).
+# vLLM is NOT a separate service — it must be started inside the ray-head container
+# so it can join the Ray session. See start-vllm.sh or deploy.sh.
 #
 # On head:
 #   docker compose -f docker-compose.vllm.yml --profile head up -d --build
 # On worker:
 #   docker compose -f docker-compose.vllm.yml --profile worker up -d --build
 #
-# Confirm Ray is healthy before expecting vLLM to start:
+# Confirm 2 nodes / 2 GPUs before starting vLLM:
 #   docker exec ray-head ray status
 
 services:
@@ -26,57 +28,14 @@ services:
       - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
       - GLOO_SOCKET_IFNAME=${NCCL_IF:-eth0}
       - TP_SOCKET_IFNAME=${NCCL_IF:-eth0}
+      - HF_TOKEN=${HF_TOKEN:-}
     volumes:
+      - ${HF_CACHE:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
       - /dev/infiniband:/dev/infiniband
     entrypoint: ["/bin/bash"]
     command:
       - -c
       - "ray start --head --node-ip-address=${HEAD_IP} --port=6379 --dashboard-host=0.0.0.0 --block"
-    profiles: [head]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-  vllm-head:
-    image: local/vllm-ray:latest
-    container_name: vllm-head
-    restart: unless-stopped
-    network_mode: host
-    ipc: host
-    privileged: true
-    depends_on:
-      - ray-head
-    environment:
-      - NCCL_SOCKET_IFNAME=${NCCL_IF:-eth0}
-      - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
-      - GLOO_SOCKET_IFNAME=${NCCL_IF:-eth0}
-      - TP_SOCKET_IFNAME=${NCCL_IF:-eth0}
-      - VLLM_HOST_IP=${HEAD_IP}
-      - HF_TOKEN=${HF_TOKEN:-}
-      - RAY_ADDRESS=${HEAD_IP}:6379
-    volumes:
-      - ${HF_CACHE:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
-      - /dev/infiniband:/dev/infiniband
-    command:
-      - --model
-      - ${VLLM_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4}
-      - --host
-      - 0.0.0.0
-      - --port
-      - ${VLLM_PORT:-8000}
-      - --tensor-parallel-size
-      - "2"
-      - --distributed-executor-backend
-      - ray
-      - --gpu-memory-utilization
-      - "0.80"
-      - --max-model-len
-      - "32768"
-      - --trust-remote-code
     profiles: [head]
     deploy:
       resources:
@@ -101,13 +60,12 @@ services:
       - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
       - GLOO_SOCKET_IFNAME=${NCCL_IF:-eth0}
       - TP_SOCKET_IFNAME=${NCCL_IF:-eth0}
-      - VLLM_HOST_IP=${WORKER_IP:-}
     volumes:
       - /dev/infiniband:/dev/infiniband
     entrypoint: ["/bin/bash"]
     command:
       - -c
-      - "ray start --address=${HEAD_IP}:6379 --node-ip-address=${WORKER_IP:-} --block"
+      - "ray start --address=${HEAD_IP}:6379 --node-ip-address=${WORKER_IP} --block"
     profiles: [worker]
     deploy:
       resources:
