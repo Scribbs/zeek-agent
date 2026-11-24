@@ -21,31 +21,36 @@ st.title("Zeek Near-Real-Time Summary")
 st.caption("Powered by NemoClaw / OpenShell + vLLM")
 
 def load_log(name):
+    """Load a Zeek log. Returns (dataframe, error_message)."""
     p = ZEEK_DIR / f"{name}.log"
     if not p.exists():
-        return pd.DataFrame()
+        return pd.DataFrame(), f"{name}.log not found"
     try:
-        df = pd.read_csv(p, sep="\t", comment="#", low_memory=False)
+        # Zeek logs have #fields header; skip comment lines
+        df = pd.read_csv(p, sep="\t", comment="#", low_memory=False, on_bad_lines="skip")
+        if df.empty:
+            return df, f"{name}.log is empty"
+
         if "ts" in df.columns:
             df["ts"] = pd.to_datetime(df["ts"], unit="s", errors="coerce")
             cutoff = datetime.utcnow() - timedelta(minutes=WINDOW_MIN)
-            df = df[df["ts"] >= cutoff]
-        return df
-    except Exception:
-        return pd.DataFrame()
+            recent = df[df["ts"] >= cutoff]
+            # If the window filter empties the frame, fall back to the full log
+            # so the UI still shows data (useful when Zeek has paused or logs are older)
+            if recent.empty:
+                return df.tail(200), f"No rows in last {WINDOW_MIN} min; showing last 200 from full log"
+            return recent, None
+        return df, None
+    except Exception as e:
+        return pd.DataFrame(), f"Parse error on {name}.log: {e}"
 
 def strip_reasoning(text: str) -> str:
-    """Keep only the final bullet summary; drop reasoning traces."""
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
-
-    # Prefer content after an explicit summary marker
     for marker in ("**Summary**", "Summary:", "## Summary", "Final summary:", "Here is the summary"):
         idx = text.lower().find(marker.lower())
         if idx != -1:
             text = text[idx:]
             break
-
-    # If still looks like reasoning, keep from the first bullet onward
     lines = text.splitlines()
     bullet_idx = None
     for i, line in enumerate(lines):
@@ -55,8 +60,6 @@ def strip_reasoning(text: str) -> str:
             break
     if bullet_idx is not None and bullet_idx > 2:
         text = "\n".join(lines[bullet_idx:])
-
-    # Drop any remaining leading prose that is clearly reasoning
     text = re.sub(
         r"^(The user wants|Let me|I need to|Looking at|Analyzing|Here'?s my|Okay,).*?(?=\n[-*•]|\n\d+[.)])",
         "",
@@ -69,7 +72,7 @@ def summarize(text):
     if not text.strip():
         return "No recent data."
     prompt = f"""Summarize these Zeek logs as a network security analyst.
-Output ONLY a short bullet list. No preamble, no reasoning, no "The user wants", no "Let me analyze".
+Output ONLY a short bullet list. No preamble, no reasoning.
 Start with the first bullet.
 
 Focus on: top talkers, unusual volumes, beaconing, odd ports/protocols, notices.
@@ -94,26 +97,30 @@ Focus on: top talkers, unusual volumes, beaconing, odd ports/protocols, notices.
 placeholder = st.empty()
 while True:
     with placeholder.container():
-        conn = load_log("conn")
-        notice = load_log("notice")
+        conn, conn_err = load_log("conn")
+        notice, notice_err = load_log("notice")
 
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("Recent Connections")
+            if conn_err:
+                st.warning(conn_err)
             if not conn.empty:
                 cols = [c for c in ["ts","id.orig_h","id.resp_h","id.resp_p","proto","service","orig_bytes","resp_bytes"] if c in conn.columns]
                 st.dataframe(conn[cols].head(40), height=280)
                 if "id.orig_h" in conn.columns:
                     st.write("Top sources:", conn.groupby("id.orig_h").size().nlargest(8).to_dict())
             else:
-                st.info("No recent conn.log")
+                st.info("No connection data")
 
         with c2:
             st.subheader("Notices")
+            if notice_err:
+                st.warning(notice_err)
             if not notice.empty:
                 st.dataframe(notice.head(20), height=280)
             else:
-                st.info("No recent notices")
+                st.info("No notice data")
 
         blob = ""
         if not conn.empty:
