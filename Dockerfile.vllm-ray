@@ -1,0 +1,6 @@
+# Thin wrapper that adds Ray to the official vLLM OpenAI image.
+# Recent vllm/vllm-openai images no longer include the ray binary.
+
+FROM vllm/vllm-openai:latest
+
+RUN pip install --no-cache-dir "ray[default]"

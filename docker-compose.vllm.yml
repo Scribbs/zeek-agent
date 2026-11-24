@@ -1,15 +1,18 @@
 # Multi-node vLLM for 2× GB10 cluster (1 GPU per node)
 #
-# Uses the official pattern: override entrypoint to /bin/bash, then run ray start.
+# Builds a thin image that adds Ray (stock vllm/vllm-openai no longer ships it).
 #
 # On head:
-#   docker compose -f docker-compose.vllm.yml --profile head up -d
+#   docker compose -f docker-compose.vllm.yml --profile head up -d --build
 # On worker:
-#   docker compose -f docker-compose.vllm.yml --profile worker up -d
+#   docker compose -f docker-compose.vllm.yml --profile worker up -d --build
 
 services:
   ray-head:
-    image: vllm/vllm-openai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-ray
+    image: local/vllm-ray:latest
     container_name: ray-head
     restart: unless-stopped
     network_mode: host
@@ -36,7 +39,7 @@ services:
               capabilities: [gpu]
 
   vllm-head:
-    image: vllm/vllm-openai:latest
+    image: local/vllm-ray:latest
     container_name: vllm-head
     restart: unless-stopped
     network_mode: host
@@ -81,7 +84,10 @@ services:
               capabilities: [gpu]
 
   ray-worker:
-    image: vllm/vllm-openai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-ray
+    image: local/vllm-ray:latest
     container_name: ray-worker
     restart: unless-stopped
     network_mode: host
