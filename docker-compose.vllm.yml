@@ -6,6 +6,9 @@
 #   docker compose -f docker-compose.vllm.yml --profile head up -d --build
 # On worker:
 #   docker compose -f docker-compose.vllm.yml --profile worker up -d --build
+#
+# Confirm Ray is healthy before expecting vLLM to start:
+#   docker exec ray-head ray status
 
 services:
   ray-head:
@@ -28,7 +31,7 @@ services:
     entrypoint: ["/bin/bash"]
     command:
       - -c
-      - "ray start --head --port=6379 --dashboard-host=0.0.0.0 --block"
+      - "ray start --head --node-ip-address=${HEAD_IP} --port=6379 --dashboard-host=0.0.0.0 --block"
     profiles: [head]
     deploy:
       resources:
@@ -98,12 +101,13 @@ services:
       - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
       - GLOO_SOCKET_IFNAME=${NCCL_IF:-eth0}
       - TP_SOCKET_IFNAME=${NCCL_IF:-eth0}
+      - VLLM_HOST_IP=${WORKER_IP:-}
     volumes:
       - /dev/infiniband:/dev/infiniband
     entrypoint: ["/bin/bash"]
     command:
       - -c
-      - "ray start --address=${HEAD_IP}:6379 --block"
+      - "ray start --address=${HEAD_IP}:6379 --node-ip-address=${WORKER_IP:-} --block"
     profiles: [worker]
     deploy:
       resources:
