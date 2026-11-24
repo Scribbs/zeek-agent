@@ -1,17 +1,13 @@
 # Multi-node vLLM for 2× GB10 cluster (1 GPU per node)
 #
-# Head: starts Ray head, then vLLM with --distributed-executor-backend ray
-# Worker: joins the Ray cluster
+# Uses the official pattern: override entrypoint to /bin/bash, then run ray start.
 #
 # On head:
 #   docker compose -f docker-compose.vllm.yml --profile head up -d
 # On worker:
 #   docker compose -f docker-compose.vllm.yml --profile worker up -d
-#
-# Wait for both Ray nodes to be up before vLLM finishes loading.
 
 services:
-  # Ray head (must be up before vLLM)
   ray-head:
     image: vllm/vllm-openai:latest
     container_name: ray-head
@@ -24,16 +20,12 @@ services:
       - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}
       - GLOO_SOCKET_IFNAME=${NCCL_IF:-eth0}
       - TP_SOCKET_IFNAME=${NCCL_IF:-eth0}
-      - RAY_ADDRESS=${HEAD_IP}:6379
     volumes:
       - /dev/infiniband:/dev/infiniband
-    entrypoint: ["ray"]
+    entrypoint: ["/bin/bash"]
     command:
-      - start
-      - --head
-      - --port=6379
-      - --dashboard-host=0.0.0.0
-      - --block
+      - -c
+      - "ray start --head --port=6379 --dashboard-host=0.0.0.0 --block"
     profiles: [head]
     deploy:
       resources:
@@ -43,7 +35,6 @@ services:
               count: all
               capabilities: [gpu]
 
-  # vLLM API (starts after Ray head is up)
   vllm-head:
     image: vllm/vllm-openai:latest
     container_name: vllm-head
@@ -73,8 +64,6 @@ services:
       - ${VLLM_PORT:-8000}
       - --tensor-parallel-size
       - "2"
-      - --pipeline-parallel-size
-      - "1"
       - --distributed-executor-backend
       - ray
       - --gpu-memory-utilization
@@ -91,7 +80,6 @@ services:
               count: all
               capabilities: [gpu]
 
-  # Ray worker (run on the second GB10)
   ray-worker:
     image: vllm/vllm-openai:latest
     container_name: ray-worker
@@ -106,11 +94,10 @@ services:
       - TP_SOCKET_IFNAME=${NCCL_IF:-eth0}
     volumes:
       - /dev/infiniband:/dev/infiniband
-    entrypoint: ["ray"]
+    entrypoint: ["/bin/bash"]
     command:
-      - start
-      - --address=${HEAD_IP}:6379
-      - --block
+      - -c
+      - "ray start --address=${HEAD_IP}:6379 --block"
     profiles: [worker]
     deploy:
       resources:
