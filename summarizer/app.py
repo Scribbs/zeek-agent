@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 import os
+import re
 from openai import OpenAI
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -34,6 +35,18 @@ def load_log(name):
     except Exception:
         return pd.DataFrame()
 
+def strip_reasoning(text: str) -> str:
+    """Remove common reasoning-model traces so only the final summary remains."""
+    # Drop <think>...</think> blocks if present
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Drop leading "The user wants..." style preambles up to the first real summary marker
+    for marker in ("**Summary**", "Summary:", "## Summary", "Final summary:", "Here is the summary"):
+        idx = text.lower().find(marker.lower())
+        if idx != -1:
+            text = text[idx:]
+            break
+    return text.strip()
+
 def summarize(text):
     if not text.strip():
         return "No recent data."
@@ -41,15 +54,21 @@ def summarize(text):
 Focus on top talkers, notices, unusual volumes, beaconing signs, odd ports/protocols.
 Be concise with bullets.
 
+IMPORTANT: Output ONLY the final summary. Do not include your reasoning, chain-of-thought, or any preamble like "The user wants" or "Let me parse". Start directly with the summary.
+
 {text[:12000]}"""
     try:
         r = client.chat.completions.create(
             model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "You are a concise network security analyst. Reply with only the final bullet summary. No reasoning, no preamble."},
+                {"role": "user", "content": prompt}
+            ],
             temperature=0.2,
-            max_tokens=800
+            max_tokens=600
         )
-        return r.choices[0].message.content
+        raw = r.choices[0].message.content or ""
+        return strip_reasoning(raw)
     except Exception as e:
         return f"LLM error: {e}"
 
