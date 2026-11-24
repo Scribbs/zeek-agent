@@ -2,6 +2,9 @@
 # Head node runs the API + coordinates tensor parallel.
 # Worker node joins the Ray cluster.
 #
+# Note: the vllm/vllm-openai image entrypoint is already `vllm`,
+# so the command is just `serve ...` (not `vllm serve ...`).
+#
 # On head:
 #   docker compose -f docker-compose.vllm.yml --profile head up -d
 # On worker:
@@ -26,7 +29,7 @@ services:
       - ${HF_CACHE:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
       - /dev/infiniband:/dev/infiniband
     command: >
-      vllm serve ${VLLM_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4}
+      serve ${VLLM_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4}
       --host 0.0.0.0
       --port ${VLLM_PORT:-8000}
       --tensor-parallel-size 2
@@ -60,8 +63,9 @@ services:
     volumes:
       - ${HF_CACHE:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
       - /dev/infiniband:/dev/infiniband
+    entrypoint: ["ray"]
     command: >
-      ray start --address=${HEAD_IP}:6379 --block
+      start --address=${HEAD_IP}:6379 --block
     profiles: [worker]
     deploy:
       resources:
