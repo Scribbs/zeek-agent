@@ -7,6 +7,7 @@ from openai import OpenAI
 from pathlib import Path
 from datetime import datetime, timedelta
 from io import StringIO
+from streamlit_agraph import agraph, Node, Edge, Config
 
 client = OpenAI(
     base_url=os.getenv("VLLM_BASE_URL", "http://host.docker.internal:8000/v1"),
@@ -32,7 +33,7 @@ def load_log(name):
         data_lines = []
         for line in text.splitlines():
             if line.startswith("#fields"):
-                fields = line.split("\t")[1:]  # drop the #fields token
+                fields = line.split("\t")[1:]
             elif line.startswith("#"):
                 continue
             elif line.strip():
@@ -63,6 +64,60 @@ def load_log(name):
         return df, None
     except Exception as e:
         return pd.DataFrame(), f"Parse error on {name}.log: {e}"
+
+def build_network_graph(df, max_edges=150):
+    """Build a force-directed graph of src → dst from conn log."""
+    if df.empty or "id.orig_h" not in df.columns or "id.resp_h" not in df.columns:
+        return None, None, None
+
+    # Aggregate edges by src-dst, weight by count and bytes
+    edge_df = (
+        df.groupby(["id.orig_h", "id.resp_h"])
+        .agg(
+            count=("id.orig_h", "size"),
+            bytes_=("orig_bytes", lambda s: pd.to_numeric(s, errors="coerce").sum()),
+        )
+        .reset_index()
+        .sort_values("count", ascending=False)
+        .head(max_edges)
+    )
+
+    # Color by rough category
+    def node_color(ip):
+        if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172."):
+            return "#4da6ff"  # internal
+        if ":" in ip:
+            return "#b388ff"  # ipv6
+        return "#ff8a65"      # external
+
+    nodes = {}
+    edges = []
+    for _, row in edge_df.iterrows():
+        src, dst = str(row["id.orig_h"]), str(row["id.resp_h"])
+        if src not in nodes:
+            nodes[src] = Node(id=src, label=src, size=20, color=node_color(src))
+        if dst not in nodes:
+            nodes[dst] = Node(id=dst, label=dst, size=20, color=node_color(dst))
+        edges.append(
+            Edge(
+                source=src,
+                target=dst,
+                label=f"{int(row['count'])}",
+                width=max(1, min(8, int(row["count"]) // 2)),
+            )
+        )
+
+    config = Config(
+        width=1100,
+        height=500,
+        directed=True,
+        physics=True,
+        hierarchical=False,
+        nodeHighlightBehavior=True,
+        highlightColor="#F7A7A6",
+        collapsible=False,
+    )
+    return list(nodes.values()), edges, config
 
 def strip_reasoning(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
@@ -110,6 +165,18 @@ while True:
     with placeholder.container():
         conn, conn_err = load_log("conn")
         notice, notice_err = load_log("notice")
+
+        # Network graph
+        st.subheader("Network Graph")
+        st.caption("Blue = internal · Orange = external · Purple = IPv6  · Edge label = connection count")
+        if not conn.empty:
+            nodes, edges, config = build_network_graph(conn)
+            if nodes and edges:
+                agraph(nodes=nodes, edges=edges, config=config)
+            else:
+                st.info("Not enough connection data for a graph")
+        else:
+            st.info("No connection data for graph")
 
         c1, c2 = st.columns(2)
         with c1:

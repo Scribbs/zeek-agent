@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-RUN pip install --no-cache-dir streamlit openai pandas
+RUN pip install --no-cache-dir streamlit openai pandas streamlit-agraph
 
 COPY app.py .
 EXPOSE 8501
