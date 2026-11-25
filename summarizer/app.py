@@ -195,7 +195,6 @@ while True:
                     show_search=show_search,
                     highlight=highlight,
                     height=560,
-                    key="zeek_graph",
                 )
                 if result and result.get("selected_node"):
                     st.info(f"Selected: {result['selected_node'].get('label', '')}")
