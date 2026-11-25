@@ -1,5 +1,9 @@
 # Zeek Agent on 2× GB10 Cluster
 
+![Network Defense Acceleration Training Deck](docs/presentation/network-defense-deck.gif)
+
+*Training overview of NemoClaw, OpenShell, Ray, and the Zeek agent (autoplays in GitHub)*
+
 Consolidated deployment: multi-node vLLM (Ray) + NemoClaw/OpenShell + Zeek summarizer UI.
 
 ## Files
