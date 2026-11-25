@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Accelerating Network Defense — NemoClaw · OpenShell · Ray</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #05070D;
+      color: #E8F6FF;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #slide-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      max-width: 1920px;
+      max-height: 1080px;
+    }
+    #slide-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    #controls {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(5, 7, 13, 0.85);
+      border: 1px solid #1A8A8E;
+      border-radius: 8px;
+      padding: 8px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      z-index: 10;
+    }
+    button, #timer {
+      background: #0A111A;
+      color: #00F0FF;
+      border: 1px solid #00F0FF;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #00F0FF; color: #05070D; }
+    #timer { border: none; background: transparent; color: #9AAAB8; }
+    #progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      background: #00F0FF;
+      width: 0%;
+      transition: width 0.3s linear;
+    }
+  </style>
+</head>
+<body>
+  <div id="progress"></div>
+  <div id="slide-container">
+    <img id="slide-img" src="slide-01.jpg" alt="Slide">
+  </div>
+  <div id="controls">
+    <button id="prev">◀ Prev</button>
+    <button id="play">▶ Play</button>
+    <button id="next">Next ▶</button>
+    <span id="timer">1 / 12</span>
+  </div>
+
+  <script>
+    const slides = [
+      "slide-01.jpg","slide-02.jpg","slide-03.jpg","slide-04.jpg",
+      "slide-05.jpg","slide-06.jpg","slide-07.jpg","slide-08.jpg",
+      "slide-09.jpg","slide-10.jpg","slide-11.jpg","slide-12.jpg"
+    ];
+    let current = 0;
+    let playing = false;
+    let interval = null;
+    const delay = 8000;
+
+    const img = document.getElementById("slide-img");
+    const timer = document.getElementById("timer");
+    const progress = document.getElementById("progress");
+    const playBtn = document.getElementById("play");
+
+    function show(n) {
+      current = (n + slides.length) % slides.length;
+      img.src = slides[current];
+      timer.textContent = `${current + 1} / ${slides.length}`;
+      progress.style.width = `${((current + 1) / slides.length) * 100}%`;
+    }
+
+    function next() { show(current + 1); }
+    function prev() { show(current - 1); }
+
+    function play() {
+      if (playing) {
+        clearInterval(interval);
+        playing = false;
+        playBtn.textContent = "▶ Play";
+      } else {
+        playing = true;
+        playBtn.textContent = "⏸ Pause";
+        interval = setInterval(next, delay);
+      }
+    }
+
+    document.getElementById("next").onclick = next;
+    document.getElementById("prev").onclick = prev;
+    playBtn.onclick = play;
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); next(); }
+      if (e.key === "ArrowLeft") prev();
+      if (e.key === "p" || e.key === "P") play();
+    });
+
+    setTimeout(play, 1500);
+  </script>
+</body>
+</html>
