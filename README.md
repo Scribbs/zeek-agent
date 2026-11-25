@@ -2,7 +2,7 @@
 
 ![Network Defense Acceleration Training Deck](docs/presentation/network-defense-deck.gif)
 
-*Training overview of NemoClaw, OpenShell, Ray, and the Zeek agent (autoplays in GitHub)*
+*Training overview of [NemoClaw](https://docs.nvidia.com/nemoclaw/latest/), [OpenShell](https://docs.nvidia.com/openshell/), [Ray](https://docs.ray.io/), and the Zeek agent (autoplays in GitHub)*
 
 Consolidated deployment: multi-node vLLM (Ray) + NemoClaw/OpenShell + Zeek summarizer UI.
 
