@@ -2,10 +2,50 @@
 
 ![Network Defense Acceleration Training Deck](docs/presentation/network-defense-deck.gif)
 
-*Training overview of [NemoClaw](https://docs.nvidia.com/nemoclaw/latest/), [OpenShell](https://docs.nvidia.com/openshell/), [Ray](https://docs.ray.io/), and the Zeek agent (autoplays in GitHub)*
+<p align="center">*Training overview of [NemoClaw](https://docs.nvidia.com/nemoclaw/latest/), [OpenShell](https://docs.nvidia.com/openshell/), [Ray](https://docs.ray.io/), and the Zeek agent (autoplays in GitHub)*</p>
 
 Consolidated deployment: multi-node vLLM (Ray) + NemoClaw/OpenShell + Zeek summarizer UI.
 
+## How NemoClaw and OpenShell Protect the Ray Cluster Running vLLM
+
+In this setup, **NemoClaw + OpenShell form the security and lifecycle boundary** between the Zeek agent and the Ray + vLLM cluster. They do not sit *inside* the Ray cluster; they wrap and mediate access *to* it.
+
+### Roles in the stack
+
+| Component | Role | What it protects |
+|-----------|------|------------------|
+| **Ray + vLLM** | Compute layer | Serves the large Nemotron model across the two GB10s (tensor parallel). Runs as containers; no agent logic lives here. |
+| **OpenShell** | Secure runtime / gateway | Sandboxes the agent, enforces policy on what the agent can touch (files, network, credentials). |
+| **NemoClaw** | Onboarding + lifecycle control plane | Configures the sandbox, points the agent at the local vLLM endpoint, and manages the OpenShell environment. |
+
+### How protection actually works here
+
+1. **Agent isolation (OpenShell)**  
+   The Zeek summarizer runs inside an OpenShell sandbox. It does **not** have free access to the host, the Ray processes, or the GPU nodes. OpenShell applies kernel-level controls (file access, system calls, network) and only allows the agent the permissions it needs.
+
+2. **Controlled inference access**  
+   NemoClaw onboards the inference provider and points it at your local vLLM endpoint (`http://...:8000/v1`). OpenShell brokers that connection. The agent can call the OpenAI-compatible API, but it cannot reach arbitrary ports, other containers, or the Ray dashboard. Credentials (if any) stay outside the agent sandbox.
+
+3. **Lifecycle and capability checks (NemoClaw)**  
+   During onboarding, NemoClaw validates the gateway, port alignment, and inference endpoint before the agent is allowed to run. This prevents the agent from starting with overly broad access or a misconfigured path to the cluster.
+
+4. **Separation of concerns**  
+   - Ray/vLLM = pure model serving (no agent code).  
+   - OpenShell = runtime boundary.  
+   - NemoClaw = policy + onboarding layer that ties them together.  
+
+   A misbehaving or compromised summarizer is contained by the sandbox and cannot directly attack the Ray head, worker, or GPUs.
+
+### What this does *not* do (in the current deployment)
+
+- It does not add authentication or network policies *inside* the Ray cluster itself.
+- It does not protect the vLLM containers from other processes on the host.
+- The protection is primarily **agent → compute** direction, not the other way around.
+
+In short: the Ray + vLLM cluster is the high-value compute target. NemoClaw and OpenShell keep the Zeek agent in a controlled sandbox so it can *use* the model endpoint without being able to reach into the cluster or the nodes.
+
+
+# How the Zeek Agent is Configured and Deployed
 ## Files
 
 | File | Purpose |
@@ -90,41 +130,3 @@ openshell gateway stop || true
 - Zeek runs with host networking so it can see the real capture interface (`ZEEK_IFACE`).
 - The summarizer reaches vLLM via `host.docker.internal`.
 - NemoClaw is onboarded non-interactively to the already-running vLLM endpoint.
-
-## How NemoClaw and OpenShell Protect the Ray Cluster Running vLLM
-
-In this setup, **NemoClaw + OpenShell form the security and lifecycle boundary** between the Zeek agent and the Ray + vLLM cluster. They do not sit *inside* the Ray cluster; they wrap and mediate access *to* it.
-
-### Roles in the stack
-
-| Component | Role | What it protects |
-|-----------|------|------------------|
-| **Ray + vLLM** | Compute layer | Serves the large Nemotron model across the two GB10s (tensor parallel). Runs as containers; no agent logic lives here. |
-| **OpenShell** | Secure runtime / gateway | Sandboxes the agent, enforces policy on what the agent can touch (files, network, credentials). |
-| **NemoClaw** | Onboarding + lifecycle control plane | Configures the sandbox, points the agent at the local vLLM endpoint, and manages the OpenShell environment. |
-
-### How protection actually works here
-
-1. **Agent isolation (OpenShell)**  
-   The Zeek summarizer runs inside an OpenShell sandbox. It does **not** have free access to the host, the Ray processes, or the GPU nodes. OpenShell applies kernel-level controls (file access, system calls, network) and only allows the agent the permissions it needs.
-
-2. **Controlled inference access**  
-   NemoClaw onboards the inference provider and points it at your local vLLM endpoint (`http://...:8000/v1`). OpenShell brokers that connection. The agent can call the OpenAI-compatible API, but it cannot reach arbitrary ports, other containers, or the Ray dashboard. Credentials (if any) stay outside the agent sandbox.
-
-3. **Lifecycle and capability checks (NemoClaw)**  
-   During onboarding, NemoClaw validates the gateway, port alignment, and inference endpoint before the agent is allowed to run. This prevents the agent from starting with overly broad access or a misconfigured path to the cluster.
-
-4. **Separation of concerns**  
-   - Ray/vLLM = pure model serving (no agent code).  
-   - OpenShell = runtime boundary.  
-   - NemoClaw = policy + onboarding layer that ties them together.  
-
-   A misbehaving or compromised summarizer is contained by the sandbox and cannot directly attack the Ray head, worker, or GPUs.
-
-### What this does *not* do (in the current deployment)
-
-- It does not add authentication or network policies *inside* the Ray cluster itself.
-- It does not protect the vLLM containers from other processes on the host.
-- The protection is primarily **agent → compute** direction, not the other way around.
-
-In short: the Ray + vLLM cluster is the high-value compute target. NemoClaw and OpenShell keep the Zeek agent in a controlled sandbox so it can *use* the model endpoint without being able to reach into the cluster or the nodes.
