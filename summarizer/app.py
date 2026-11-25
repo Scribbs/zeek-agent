@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import os
 import re
+import json
 from openai import OpenAI
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -15,7 +16,10 @@ client = OpenAI(
 )
 MODEL = os.getenv("MODEL", "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4")
 ZEEK_DIR = Path("/zeek/logs")
-REFRESH = int(os.getenv("REFRESH_SECONDS", "60"))
+DATA_DIR = Path("/app/data")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+SUMMARIES_FILE = DATA_DIR / "summaries.jsonl"
+REFRESH = int(os.getenv("REFRESH_SECONDS", "300"))  # 5 minutes default
 WINDOW_MIN = int(os.getenv("LOG_WINDOW_MINUTES", "15"))
 
 st.set_page_config(page_title="Zeek Summary", layout="wide")
@@ -162,6 +166,38 @@ Return ONLY a short bullet list of findings. No preamble.
     except Exception as e:
         return f"LLM error: {e}"
 
+def save_summary(summary: str):
+    """Append a timestamped summary to the JSONL store."""
+    entry = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "summary": summary,
+        "model": MODEL,
+        "window_min": WINDOW_MIN,
+    }
+    with open(SUMMARIES_FILE, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+def load_summaries(max_entries=200):
+    """Load recent summaries, newest first."""
+    if not SUMMARIES_FILE.exists():
+        return []
+    entries = []
+    try:
+        with open(SUMMARIES_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except Exception:
+        return []
+    # Keep last N and reverse so newest is first
+    entries = entries[-max_entries:]
+    entries.reverse()
+    return entries
+
 # Sidebar controls
 with st.sidebar:
     st.header("Graph Controls")
@@ -171,6 +207,21 @@ with st.sidebar:
     show_particles = st.checkbox("Animate edge particles", value=True)
     show_search = st.checkbox("Show search", value=True)
     highlight_ip = st.text_input("Highlight IP (exact)", "")
+
+    st.header("Timeline")
+    past = load_summaries()
+    if past:
+        labels = [f"{e['timestamp'][:19].replace('T', ' ')} UTC" for e in past]
+        selected_idx = st.selectbox(
+            "View past summary",
+            range(len(past)),
+            format_func=lambda i: labels[i],
+            index=0,
+        )
+        st.caption(f"{len(past)} stored summaries")
+    else:
+        selected_idx = None
+        st.caption("No past summaries yet")
 
 placeholder = st.empty()
 while True:
@@ -239,9 +290,26 @@ while True:
             blob += "NOTICES:\n" + notice.head(10).to_string() + "\n"
 
         st.subheader("LLM Summary")
-        with st.spinner("Summarizing..."):
-            st.markdown(summarize(blob))
 
-        st.caption(f"Updated {datetime.now().strftime('%H:%M:%S')}  |  Window: last {WINDOW_MIN} min  |  Model: {MODEL}")
+        # Show selected historical summary or generate new one
+        if selected_idx is not None and selected_idx > 0:
+            # Viewing a past summary (index 0 is newest / live)
+            hist = past[selected_idx]
+            st.info(f"Historical summary from {hist['timestamp'][:19].replace('T', ' ')} UTC")
+            st.markdown(hist["summary"])
+        else:
+            with st.spinner("Summarizing..."):
+                summary = summarize(blob)
+                st.markdown(summary)
+                # Persist the new summary
+                if summary and not summary.startswith("LLM error") and summary != "No recent data.":
+                    save_summary(summary)
+
+        st.caption(
+            f"Updated {datetime.now().strftime('%H:%M:%S')}  |  "
+            f"Window: last {WINDOW_MIN} min  |  "
+            f"Refresh every {REFRESH // 60} min  |  "
+            f"Model: {MODEL}"
+        )
 
     time.sleep(REFRESH)
