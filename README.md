@@ -1,4 +1,7 @@
-# Zeek Agent: Multi-node vLLM (Ray) + NemoClaw/OpenShell + Zeek summarizer and UI.
+<p align="center">
+  <h1>Zeek Agent</h1>
+  <p>Multi-node vLLM (Ray) + NemoClaw/OpenShell + Zeek summarizer and UI.</p>
+</p>
 
 ![Network Defense Acceleration Training Deck](docs/presentation/network-defense-deck.gif)
 
