@@ -1,4 +1,4 @@
-# Zeek Agent on 2× GB10 Cluster
+# Zeek Agent 
 
 ![Network Defense Acceleration Training Deck](docs/presentation/network-defense-deck.gif)
 
