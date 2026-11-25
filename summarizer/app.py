@@ -7,7 +7,7 @@ from openai import OpenAI
 from pathlib import Path
 from datetime import datetime, timedelta
 from io import StringIO
-from streamlit_agraph import agraph, Node, Edge, Config
+from streamlit_d3_network import st_d3_network, Node, Link, Zone
 
 client = OpenAI(
     base_url=os.getenv("VLLM_BASE_URL", "http://host.docker.internal:8000/v1"),
@@ -65,59 +65,61 @@ def load_log(name):
     except Exception as e:
         return pd.DataFrame(), f"Parse error on {name}.log: {e}"
 
-def build_network_graph(df, max_edges=150):
-    """Build a force-directed graph of src → dst from conn log."""
-    if df.empty or "id.orig_h" not in df.columns or "id.resp_h" not in df.columns:
-        return None, None, None
+def ip_zone(ip: str) -> str:
+    ip = str(ip)
+    if ip.startswith(("192.168.", "10.", "172.")):
+        return "internal"
+    if ":" in ip:
+        return "ipv6"
+    return "external"
 
-    # Aggregate edges by src-dst, weight by count and bytes
+def build_d3_graph(df, max_edges=150):
+    """Build nodes/links with zones for streamlit-d3-network."""
+    if df.empty or "id.orig_h" not in df.columns or "id.resp_h" not in df.columns:
+        return [], [], []
+
     edge_df = (
         df.groupby(["id.orig_h", "id.resp_h"])
-        .agg(
-            count=("id.orig_h", "size"),
-            bytes_=("orig_bytes", lambda s: pd.to_numeric(s, errors="coerce").sum()),
-        )
+        .agg(count=("id.orig_h", "size"))
         .reset_index()
         .sort_values("count", ascending=False)
         .head(max_edges)
     )
 
-    # Color by rough category
-    def node_color(ip):
-        if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172."):
-            return "#4da6ff"  # internal
-        if ":" in ip:
-            return "#b388ff"  # ipv6
-        return "#ff8a65"      # external
+    nodes_dict = {}
+    links = []
 
-    nodes = {}
-    edges = []
     for _, row in edge_df.iterrows():
         src, dst = str(row["id.orig_h"]), str(row["id.resp_h"])
-        if src not in nodes:
-            nodes[src] = Node(id=src, label=src, size=20, color=node_color(src))
-        if dst not in nodes:
-            nodes[dst] = Node(id=dst, label=dst, size=20, color=node_color(dst))
-        edges.append(
-            Edge(
+        count = int(row["count"])
+
+        for ip in (src, dst):
+            if ip not in nodes_dict:
+                zone = ip_zone(ip)
+                nodes_dict[ip] = Node(
+                    id=ip,
+                    label=ip,
+                    zone=zone,
+                    status="ok",
+                    tooltip=[f"Zone: {zone}", f"Connections: {count}"],
+                )
+
+        links.append(
+            Link(
                 source=src,
                 target=dst,
-                label=f"{int(row['count'])}",
-                width=max(1, min(8, int(row["count"]) // 2)),
+                label=str(count),
+                width=max(1, min(6, count // 3)),
             )
         )
 
-    config = Config(
-        width=1100,
-        height=500,
-        directed=True,
-        physics=True,
-        hierarchical=False,
-        nodeHighlightBehavior=True,
-        highlightColor="#F7A7A6",
-        collapsible=False,
-    )
-    return list(nodes.values()), edges, config
+    zones = [
+        Zone(name="internal", label="Internal", color="#4da6ff"),
+        Zone(name="external", label="External", color="#ff8a65"),
+        Zone(name="ipv6", label="IPv6", color="#b388ff"),
+    ]
+
+    return list(nodes_dict.values()), links, zones
 
 def strip_reasoning(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
@@ -160,19 +162,43 @@ Return ONLY a short bullet list of findings. No preamble.
     except Exception as e:
         return f"LLM error: {e}"
 
+# Sidebar controls
+with st.sidebar:
+    st.header("Graph Controls")
+    layout = st.selectbox("Layout", ["force", "radial", "hierarchical", "grid", "community"], index=0)
+    max_edges = st.slider("Max edges", 20, 300, 120, 10)
+    show_hulls = st.checkbox("Show zone hulls", value=True)
+    show_particles = st.checkbox("Animate edge particles", value=True)
+    show_search = st.checkbox("Show search", value=True)
+    highlight_ip = st.text_input("Highlight IP (exact)", "")
+
 placeholder = st.empty()
 while True:
     with placeholder.container():
         conn, conn_err = load_log("conn")
         notice, notice_err = load_log("notice")
 
-        # Network graph
         st.subheader("Network Graph")
-        st.caption("Blue = internal · Orange = external · Purple = IPv6  · Edge label = connection count")
+        st.caption("Drag nodes to pin · Search with / · Zones: blue=internal, orange=external, purple=IPv6")
+
         if not conn.empty:
-            nodes, edges, config = build_network_graph(conn)
-            if nodes and edges:
-                agraph(nodes=nodes, edges=edges, config=config)
+            nodes, links, zones = build_d3_graph(conn, max_edges=max_edges)
+            if nodes and links:
+                highlight = [highlight_ip] if highlight_ip else None
+                result = st_d3_network(
+                    nodes=nodes,
+                    links=links,
+                    zones=zones,
+                    layout=layout,
+                    show_hulls=show_hulls,
+                    show_particles=show_particles,
+                    show_search=show_search,
+                    highlight=highlight,
+                    height=560,
+                    key="zeek_graph",
+                )
+                if result and result.get("selected_node"):
+                    st.info(f"Selected: {result['selected_node'].get('label', '')}")
             else:
                 st.info("Not enough connection data for a graph")
         else:
